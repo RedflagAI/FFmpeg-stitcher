@@ -39,8 +39,9 @@ typedef struct StitchContext {
     char *dur_expr;
     AVExpr *dur_pexpr;
 
-    int displaying_alternate;
     int w, h;
+    char displaying_alternate;
+    char last_ts_valid;
 } StitchContext;
 
 #endif /* AVFILTER_STITCH_H */

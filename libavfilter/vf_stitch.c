@@ -113,18 +113,61 @@ static int config_output(AVFilterLink *outlink)
     return ff_framesync_configure(&s->fs);
 }
 
+static int config_input_a(AVFilterLink *inlink)
+{
+  AVFilterContext *ctx = inlink->dst;
+  StitchContext *s = ctx->priv;
+  int ret;
+
+  if (s->w == 0) {
+      s->w = inlink->w;
+      s->h = inlink->h;
+      return 0;
+  } else if (inlink->w != s->w ||
+             inlink->h != s->h) {
+    av_log(ctx, AV_LOG_ERROR,
+           "video dimmensions must match %ix%i vs %ix%i\n",
+           inlink->w, inlink->h, s->w, s->h);
+    return AVERROR_INVALIDDATA;
+  } else
+      return 0;
+}
+
+static int config_input_b(AVFilterLink *inlink) {
+  AVFilterContext *ctx = inlink->dst;
+  StitchContext *s = ctx->priv;
+  int ret;
+
+  if (s->w == 0) {
+    s->w = inlink->w;
+    s->h = inlink->h;
+    return 0;
+  } else if (inlink->w != s->w || inlink->h != s->h) {
+    av_log(ctx, AV_LOG_ERROR, "video dimmensions must match %ix%i vs %ix%i\n",
+           s->w, s->h, inlink->w, inlink->h);
+    return AVERROR_INVALIDDATA;
+  } else
+    return 0;
+}
+
 static int handle_frame(FFFrameSync *fs)
 {
-    StitchContext *s;
-    AVFrame *a;
-    AVFrame *b;
+    StitchContext *s = fs->parent->priv;
+    AVFrame *a, *b;
     int64_t difference;
-    AVFilterLink *out_link;
+    AVFilterLink *out_link = fs->parent->outputs[0];
     int ret;
-    s = fs->parent->priv;
+    int64_t period;
+    AVRational time_base = fs->parent->inputs[0]->time_base;
+
     ff_framesync_get_frame(fs, 0, &a, 1);
-    difference = a->pts - s->last_ts;
-    out_link = fs->parent->outputs[0];
+    if (s->last_ts_valid)
+        difference = a->pts - s->last_ts;
+    else {
+        difference = 0;
+        s->last_ts_valid = 1;
+    }
+    s->last_ts = a->pts;
 
     if (!s->displaying_alternate) {
         ret = ff_filter_frame(out_link, a);
@@ -136,7 +179,9 @@ static int handle_frame(FFFrameSync *fs)
 
     if (difference >= s->remaining) {
         s->displaying_alternate = !s->displaying_alternate;
-        s->remaining = difference - s->remaining;
+
+        period = llrint(s->duration * time_base.den / (double)time_base.num);
+        s->remaining = period - (difference - s->remaining);
     } else {
         s->remaining -= difference;
     }
@@ -146,32 +191,19 @@ static int handle_frame(FFFrameSync *fs)
 static av_cold int init(AVFilterContext *ctx)
 {
     StitchContext *s = ctx->priv;
-
     int ret;
 
     s->var_values[0] = 5.0;
-    int aw, ah, bw, bh;
-    aw = ctx->inputs[0]->w;
-    ah = ctx->inputs[0]->h;
-    s->w = aw;
-    s->h = ah;
-    bw = ctx->inputs[1]->w;
-    bh = ctx->inputs[1]->h;
+    s->duration = 5.0;
+    s->w = 0;
+    s->h = 0;
+    s->remaining = 0;
+    s->last_ts_valid = 0;
 
-    if (aw != bw ||
-        ah != bh) {
-        av_log(ctx, AV_LOG_ERROR, "video dimmensions must match %ix%i vs %ix%i\n",
-               aw, ah, bw, bh);
-        return AVERROR_INVALIDDATA;
-    }
-    if (ctx->inputs[0]->time_base.num != ctx->inputs[1]->time_base.num ||
-        ctx->inputs[0]->time_base.den != ctx->inputs[1]->time_base.den) {
-      av_log(ctx, AV_LOG_ERROR, "non-matching timebases in stitcher\n");
-      return AVERROR_INVALIDDATA;
-    }
-
-    eval_expr(ctx);
-    av_log(ctx, AV_LOG_VERBOSE, "duration:%f\n", s->duration);
+    /*
+     * eval_expr(ctx);
+     * av_log(ctx, AV_LOG_VERBOSE, "duration:%f\n", s->duration);
+     */
     s->fs.on_event = handle_frame;
     return 0;
 }
@@ -204,10 +236,12 @@ static const AVFilterPad avfilter_vf_stitch_inputs[] = {
     {
         .name         = "a variant",
         .type         = AVMEDIA_TYPE_VIDEO,
+        .config_props = config_input_a,
     },
     {
         .name         = "b variant",
         .type         = AVMEDIA_TYPE_VIDEO,
+        .config_props = config_input_b,
     },
 };
 
