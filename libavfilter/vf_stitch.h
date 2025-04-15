@@ -16,73 +16,31 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVFILTER_OVERLAY_H
-#define AVFILTER_OVERLAY_H
+#ifndef AVFILTER_STITCH_H
+#define AVFILTER_STITCH_H
 
-#include "libavutil/eval.h"
-#include "libavutil/pixdesc.h"
 #include "framesync.h"
 #include "avfilter.h"
 
 enum var_name {
-    VAR_MAIN_W,    VAR_MW,
-    VAR_MAIN_H,    VAR_MH,
-    VAR_OVERLAY_W, VAR_OW,
-    VAR_OVERLAY_H, VAR_OH,
-    VAR_HSUB,
-    VAR_VSUB,
-    VAR_X,
-    VAR_Y,
-    VAR_N,
-    VAR_T,
+    VAR_DURATION,
     VAR_VARS_NB
-};
-
-enum StitchFormat {
-    OVERLAY_FORMAT_YUV420,
-    OVERLAY_FORMAT_YUV420P10,
-    OVERLAY_FORMAT_YUV422,
-    OVERLAY_FORMAT_YUV422P10,
-    OVERLAY_FORMAT_YUV444,
-    OVERLAY_FORMAT_YUV444P10,
-    OVERLAY_FORMAT_RGB,
-    OVERLAY_FORMAT_GBRP,
-    OVERLAY_FORMAT_AUTO,
-    OVERLAY_FORMAT_NB
 };
 
 typedef struct StitchContext {
     const AVClass *class;
-    int x, y;                   ///< position of overlaid picture
-
-    uint8_t main_is_packed_rgb;
-    uint8_t main_rgba_map[4];
-    uint8_t main_has_alpha;
-    uint8_t stitch_is_packed_rgb;
-    uint8_t stitch_rgba_map[4];
-    uint8_t stitch_has_alpha;
-    int format;                 ///< StitchFormat
-    int alpha_format;
-    int eval_mode;              ///< EvalMode
 
     FFFrameSync fs;
+    int64_t remaining;
+    int64_t last_ts;
 
-    int main_pix_step[4];       ///< steps per pixel for each plane of the main output
-    int stitch_pix_step[4];    ///< steps per pixel for each plane of the stitch
-    int hsub, vsub;             ///< chroma subsampling values
-    const AVPixFmtDescriptor *main_desc; ///< format descriptor for main input
+    double duration;
+    double var_values[1];
+    char *dur_expr;
+    AVExpr *dur_pexpr;
 
-    double var_values[VAR_VARS_NB];
-    char *x_expr, *y_expr;
-
-    AVExpr *x_pexpr, *y_pexpr;
-
-    int (*blend_row[4])(uint8_t *d, uint8_t *da, uint8_t *s, uint8_t *a, int w,
-                        ptrdiff_t alinesize);
-    int (*blend_slice)(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs);
+    int displaying_alternate;
+    int w, h;
 } StitchContext;
 
-void ff_stitch_init_x86(StitchContext *s, int format, int pix_format,
-                         int alpha_format, int main_has_alpha);
-
-#endif /* AVFILTER_OVERLAY_H */
+#endif /* AVFILTER_STITCH_H */
