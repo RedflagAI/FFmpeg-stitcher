@@ -35,13 +35,13 @@ typedef struct StitchContext {
     int64_t last_ts;
 
     double duration;
-    double var_values[1];
-    char *dur_expr;
-    AVExpr *dur_pexpr;
+    uint64_t pattern;
+    uint64_t plen;
 
     int w, h;
     char displaying_alternate;
     char last_ts_valid;
+    unsigned char current_pattern_offset;
 } StitchContext;
 
 #endif /* AVFILTER_STITCH_H */

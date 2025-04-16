@@ -25,6 +25,7 @@
  * stitch one video on top of another
  */
 
+#include <limits.h>
 #include "avfilter.h"
 #include "formats.h"
 #include "libavutil/common.h"
@@ -39,63 +40,10 @@
 #include "drawutils.h"
 #include "framesync.h"
 #include "video.h"
-#include <libavutil/error.h>
-#include <libavutil/frame.h>
-#include <libavutil/log.h>
+#include "libavutil/error.h"
+#include "libavutil/frame.h"
+#include "libavutil/log.h"
 #include "vf_stitch.h"
-
-static const char *const var_names[] = {
-    "duration",
-    NULL
-};
-
-
-static void eval_expr(AVFilterContext *ctx)
-{
-    StitchContext *s = ctx->priv;
-
-    s->duration = av_expr_eval(s->dur_pexpr, s->var_values, NULL);
-}
-
-static int set_expr(AVExpr **pexpr, const char *expr, const char *option, void *log_ctx)
-{
-    int ret;
-    AVExpr *old = NULL;
-
-    if (*pexpr)
-        old = *pexpr;
-    ret = av_expr_parse(pexpr, expr, var_names,
-                        NULL, NULL, NULL, NULL, 0, log_ctx);
-    if (ret < 0) {
-        av_log(log_ctx, AV_LOG_ERROR,
-               "Error when evaluating the expression '%s' for %s\n",
-               expr, option);
-        *pexpr = old;
-        return ret;
-    }
-
-    av_expr_free(old);
-    return 0;
-}
-
-static int process_command(AVFilterContext *ctx, const char *cmd, const char *args,
-                           char *res, int res_len, int flags)
-{
-    StitchContext *s = ctx->priv;
-    int ret;
-
-    if (!strcmp(cmd, "duration"))
-        ret = set_expr(&s->dur_pexpr, args, cmd, ctx);
-    else
-        ret = AVERROR(ENOSYS);
-
-    if (ret < 0)
-        return ret;
-
-    eval_expr(ctx);
-    av_log(ctx, AV_LOG_VERBOSE, "duration:%f\n", s->duration);
-    return ret;
-}
 
 static int config_output(AVFilterLink *outlink)
 {
@@ -161,13 +109,35 @@ static int handle_frame(FFFrameSync *fs)
     AVRational time_base = fs->parent->inputs[0]->time_base;
 
     ff_framesync_get_frame(fs, 0, &a, 0);
-    if (s->last_ts_valid)
+    if (s->last_ts_valid) {
+        /* hot path */
         difference = a->pts - s->last_ts;
-    else {
+        s->last_ts = a->pts;
+
+        if (difference >= s->remaining) {
+            s->current_pattern_offset =
+                (s->current_pattern_offset + 1) % s->plen;
+
+            s->displaying_alternate =
+                (s->pattern >> s->current_pattern_offset) & 0x1;
+
+            period = llrint(s->duration * time_base.den / (double)time_base.num);
+            s->remaining = period - (difference - s->remaining);
+        } else {
+            s->remaining -= difference;
+        }
+    } else {
+        /* this is the first frame, do one time setup */
         difference = 0;
+        s->last_ts = a->pts;
         s->last_ts_valid = 1;
+
+        period = llrint(s->duration * time_base.den / (double)time_base.num);
+        s->remaining = period;
+
+        s->current_pattern_offset = 0;
+        s->displaying_alternate = s->pattern & 0x1;
     }
-    s->last_ts = a->pts;
 
     if (!s->displaying_alternate) {
         ret = ff_filter_frame(out_link, av_frame_clone(a));
@@ -181,33 +151,15 @@ static int handle_frame(FFFrameSync *fs)
         av_frame_free(&b);
         return ret;
     }
-    if (difference >= s->remaining) {
-        s->displaying_alternate = !s->displaying_alternate;
 
-        period = llrint(s->duration * time_base.den / (double)time_base.num);
-        s->remaining = period - (difference - s->remaining);
-    } else {
-        s->remaining -= difference;
-    }
     return 0;
 }
 
 static av_cold int init(AVFilterContext *ctx)
 {
     StitchContext *s = ctx->priv;
-    int ret;
 
-    s->var_values[0] = 5.0;
-    s->duration = 5.0;
-    s->w = 0;
-    s->h = 0;
-    s->remaining = 0;
-    s->last_ts_valid = 0;
 
-    /*
-     * eval_expr(ctx);
-     * av_log(ctx, AV_LOG_VERBOSE, "duration:%f\n", s->duration);
-     */
     s->fs.on_event = handle_frame;
     return 0;
 }
@@ -230,9 +182,32 @@ static int activate(AVFilterContext *ctx)
 #define TFLAGS AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption stitch_options[] = {
-    { "duration", "how long between switching variants", OFFSET(dur_expr), AV_OPT_TYPE_DOUBLE, {.dbl = 5.0}, 0.15, 100, TFLAGS },
-    { NULL }
-};
+    {"duration",
+     "how long between switching variants",
+     OFFSET(duration),
+     AV_OPT_TYPE_DOUBLE,
+     {.dbl = 5.0},
+     0.15,
+     100,
+     TFLAGS},
+
+    {"pattern",
+     "64bit unsigned integer bitmask representing AB pattern. A=0, B=1",
+     OFFSET(pattern),
+     AV_OPT_TYPE_UINT64,
+     {.i64 = 0},
+     0,
+     UINT_MAX,
+     TFLAGS},
+    {"plen",
+     "how many bits of pattern to repeat, starting from lsb",
+     OFFSET(plen),
+     AV_OPT_TYPE_UINT64,
+     {.i64 = 1},
+     1,
+     64,
+     TFLAGS},
+    {NULL}};
 
 FRAMESYNC_DEFINE_CLASS(stitch, StitchContext, fs);
 
@@ -267,7 +242,9 @@ const AVFilter ff_vf_stitch = {
     .uninit        = uninit,
     .priv_size     = sizeof(StitchContext),
     .activate      = activate,
-    .process_command = process_command,
+    /*
+     * .process_command = process_command,
+     */
     FILTER_INPUTS(avfilter_vf_stitch_inputs),
     FILTER_OUTPUTS(avfilter_vf_stitch_outputs),
 };
