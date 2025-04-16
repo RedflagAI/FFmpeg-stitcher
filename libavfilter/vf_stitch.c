@@ -153,10 +153,10 @@ static int config_input_b(AVFilterLink *inlink) {
 static int handle_frame(FFFrameSync *fs)
 {
     StitchContext *s = fs->parent->priv;
-    AVFrame *a, *b;
+    AVFrame *a = NULL, *b = NULL;
     int64_t difference;
     AVFilterLink *out_link = fs->parent->outputs[0];
-    int ret;
+    int ret = 0;
     int64_t period;
     AVRational time_base = fs->parent->inputs[0]->time_base;
 
@@ -171,12 +171,19 @@ static int handle_frame(FFFrameSync *fs)
 
     if (!s->displaying_alternate) {
         ret = ff_filter_frame(out_link, a);
+        av_frame_unref(a);      /* feels wrong but works? */
     } else {
         av_frame_free(&a);
         ff_framesync_get_frame(fs, 1, &b, 1);
         ret = ff_filter_frame(out_link, b);
+        av_frame_unref(b);      /* feels wrong but works? */
     }
 
+    if (ret) {
+        av_frame_free(&a);
+        av_frame_free(&b);
+        return ret;
+    }
     if (difference >= s->remaining) {
         s->displaying_alternate = !s->displaying_alternate;
 
@@ -185,7 +192,7 @@ static int handle_frame(FFFrameSync *fs)
     } else {
         s->remaining -= difference;
     }
-    return ret;
+    return 0;
 }
 
 static av_cold int init(AVFilterContext *ctx)
