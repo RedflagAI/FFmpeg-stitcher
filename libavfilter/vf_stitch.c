@@ -160,7 +160,7 @@ static int handle_frame(FFFrameSync *fs)
     int64_t period;
     AVRational time_base = fs->parent->inputs[0]->time_base;
 
-    ff_framesync_get_frame(fs, 0, &a, 1);
+    ff_framesync_get_frame(fs, 0, &a, 0);
     if (s->last_ts_valid)
         difference = a->pts - s->last_ts;
     else {
@@ -170,13 +170,10 @@ static int handle_frame(FFFrameSync *fs)
     s->last_ts = a->pts;
 
     if (!s->displaying_alternate) {
-        ret = ff_filter_frame(out_link, a);
-        av_frame_unref(a);      /* feels wrong but works? */
+        ret = ff_filter_frame(out_link, av_frame_clone(a));
     } else {
-        av_frame_free(&a);
-        ff_framesync_get_frame(fs, 1, &b, 1);
-        ret = ff_filter_frame(out_link, b);
-        av_frame_unref(b);      /* feels wrong but works? */
+        ff_framesync_get_frame(fs, 1, &b, 0);
+        ret = ff_filter_frame(out_link, av_frame_clone(b));
     }
 
     if (ret) {
