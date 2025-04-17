@@ -100,57 +100,66 @@ static int config_input_b(AVFilterLink *inlink) {
 
 static int handle_frame(FFFrameSync *fs)
 {
-    StitchContext *s = fs->parent->priv;
-    AVFrame *a = NULL, *b = NULL;
+    AVFilterContext *ctx = fs->parent;
+    StitchContext *s = ctx->priv;
+    AVFrame *a = NULL, *b = NULL, *out = NULL;
     int64_t difference;
-    AVFilterLink *out_link = fs->parent->outputs[0];
+    AVFilterLink *out_link = ctx->outputs[0];
     int ret = 0;
     int64_t period;
-    AVRational time_base = fs->parent->inputs[0]->time_base;
 
-    ff_framesync_get_frame(fs, 0, &a, 0);
+    ret = ff_framesync_get_frame(fs, 0, &a, 1);
+    if (ret < 0)
+        return ret;
+    ret = ff_framesync_get_frame(fs, 1, &b, 1);
+    if (ret < 0)
+        return ret;
+    a->pts = av_rescale_q(fs->pts, fs->time_base, ctx->outputs[0]->time_base);
+    b->pts = av_rescale_q(fs->pts, fs->time_base, ctx->outputs[0]->time_base);
+
     if (s->last_ts_valid) {
         /* hot path */
-        difference = a->pts - s->last_ts;
-        s->last_ts = a->pts;
+        difference = s->fs.pts - s->last_ts;
+        s->last_ts = s->fs.pts;
 
-        if (difference >= s->remaining) {
+        if (difference < s->remaining)
+            s->remaining -= difference;
+        else {
             s->current_pattern_offset =
                 (s->current_pattern_offset + 1) % s->plen;
 
             s->displaying_alternate =
                 (s->pattern >> s->current_pattern_offset) & 0x1;
 
-            period = llrint(s->duration * time_base.den / (double)time_base.num);
+            period = llrint(s->duration * fs->time_base.den / (double)fs->time_base.num);
             s->remaining = period - (difference - s->remaining);
-        } else {
-            s->remaining -= difference;
         }
     } else {
         /* this is the first frame, do one time setup */
         difference = 0;
-        s->last_ts = a->pts;
+        s->last_ts = s->fs.pts;
         s->last_ts_valid = 1;
 
-        period = llrint(s->duration * time_base.den / (double)time_base.num);
+        period = llrint(s->duration * fs->time_base.den / (double)fs->time_base.num);
         s->remaining = period;
 
         s->current_pattern_offset = 0;
         s->displaying_alternate = s->pattern & 0x1;
     }
 
-    if (!s->displaying_alternate) {
-        ret = ff_filter_frame(out_link, av_frame_clone(a));
-    } else {
-        ff_framesync_get_frame(fs, 1, &b, 0);
-        ret = ff_filter_frame(out_link, av_frame_clone(b));
-    }
-
-    if (ret) {
+    if (s->displaying_alternate) {
+        out = b;
         av_frame_free(&a);
+    } else {
+        out = a;
         av_frame_free(&b);
-        return ret;
     }
+    if (!out)
+        return AVERROR(ENOMEM);
+
+    ret = ff_filter_frame(out_link, out);
+    if (ret < 0)
+        return ret;
 
     return 0;
 }
