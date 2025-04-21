@@ -37,7 +37,9 @@ typedef struct StitchContext {
     double duration;
     uint64_t pattern;
     uint64_t plen;
+    double offset;
 
+    int64_t period;
     int w, h;
     char displaying_alternate;
     char last_ts_valid;

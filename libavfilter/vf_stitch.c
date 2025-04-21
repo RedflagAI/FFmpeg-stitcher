@@ -106,7 +106,6 @@ static int handle_frame(FFFrameSync *fs)
     int64_t difference;
     AVFilterLink *out_link = ctx->outputs[0];
     int ret = 0;
-    int64_t period;
 
     ret = ff_framesync_get_frame(fs, 0, &a, 1);
     if (ret < 0)
@@ -131,17 +130,26 @@ static int handle_frame(FFFrameSync *fs)
             s->displaying_alternate =
                 (s->pattern >> s->current_pattern_offset) & 0x1;
 
-            period = llrint(s->duration * fs->time_base.den / (double)fs->time_base.num);
-            s->remaining = period - (difference - s->remaining);
+            s->remaining = s->period - (difference - s->remaining);
         }
     } else {
-        /* this is the first frame, do one time setup */
+        /* this is the first frame, do one time setup.
+
+          This can't be in init because the framesync timebase isn't
+          set there. */
         difference = 0;
         s->last_ts = s->fs.pts;
         s->last_ts_valid = 1;
 
-        period = llrint(s->duration * fs->time_base.den / (double)fs->time_base.num);
-        s->remaining = period;
+        double seconds_to_ts = fs->time_base.den / (double)fs->time_base.num;
+        int64_t offset_ts = llrint(s->offset * seconds_to_ts);
+
+        s->period = llrint(s->duration * seconds_to_ts);
+        s->remaining = s->period - offset_ts;
+        /* we compensate the onetime difference being zero with a
+           manual offset. We can't be sure a->duration is set or that
+           it's the appropriate length for the output frame since the
+           a frame may be longer than the b frame. */
 
         s->current_pattern_offset = 0;
         s->displaying_alternate = s->pattern & 0x1;
@@ -167,12 +175,21 @@ static int handle_frame(FFFrameSync *fs)
 static av_cold int init(AVFilterContext *ctx)
 {
     StitchContext *s = ctx->priv;
+    const FFFrameSync fs = s->fs;
 
+    if (s->offset > s->duration) {
+        av_log(ctx, AV_LOG_ERROR,
+               "offset %f greater than duration %f", s->offset, s->duration);
+        return AVERROR_INVALIDDATA;
+    } else if (s->offset == s->duration) {
+        s->offset = 0.0;
+    }
+    s->last_ts_valid = 0;
+    /* should be optimized out, but just to be explicit */
 
     s->fs.on_event = handle_frame;
     return 0;
 }
-
 static av_cold void uninit(AVFilterContext *ctx)
 {
   StitchContext *s = ctx->priv;
@@ -192,14 +209,13 @@ static int activate(AVFilterContext *ctx)
 
 static const AVOption stitch_options[] = {
     {"duration",
-     "how long between switching variants",
+     "number of seconds between next pattern bit",
      OFFSET(duration),
      AV_OPT_TYPE_DOUBLE,
      {.dbl = 5.0},
      0.15,
-     100,
+     100.0,
      TFLAGS},
-
     {"pattern",
      "64bit unsigned integer bitmask representing AB pattern. A=0, B=1",
      OFFSET(pattern),
@@ -215,6 +231,14 @@ static const AVOption stitch_options[] = {
      {.i64 = 1},
      1,
      64,
+     TFLAGS},
+    {"offset",
+     "offset into initial duration in seconds",
+     OFFSET(offset),
+     AV_OPT_TYPE_DOUBLE,
+     {.dbl = 0.0},
+     0.0,
+     100.0,
      TFLAGS},
     {NULL}};
 
