@@ -386,6 +386,7 @@ extern const AVFilter ff_vf_ocv;
 extern const AVFilter ff_vf_oscilloscope;
 extern const AVFilter ff_vf_overlay;
 extern const AVFilter ff_vf_stitch;
+extern const AVFilter ff_vf_lum;
 extern const AVFilter ff_vf_overlay_opencl;
 extern const AVFilter ff_vf_overlay_qsv;
 extern const AVFilter ff_vf_overlay_vaapi;
