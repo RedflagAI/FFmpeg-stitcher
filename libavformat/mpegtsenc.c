@@ -2369,6 +2369,7 @@ static void mpegts_deinit(AVFormatContext *s)
 static int mpegts_check_bitstream(AVFormatContext *s, AVStream *st,
                                   const AVPacket *pkt)
 {
+    int ret;
     const struct Entry {
         enum AVCodecID id;
         const char *bsf_name;
@@ -2383,6 +2384,8 @@ static int mpegts_check_bitstream(AVFormatContext *s, AVStream *st,
     if (st->codecpar->codec_id == AV_CODEC_ID_SCTE_35) {
         /* Consider merging this with above and setting bitflag in extradata */
         ret = ff_stream_add_bitstream_filter(st, "scte35ptsadjust", NULL);
+        if (ret < 0)
+            return ret;
     }
 
     for (int i = 0; i < FF_ARRAY_ELEMS(list); i++) {
