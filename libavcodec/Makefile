@@ -162,6 +162,7 @@ OBJS-$(CONFIG_QSVDEC)                  += qsvdec.o
 OBJS-$(CONFIG_QSVENC)                  += qsvenc.o
 OBJS-$(CONFIG_RANGECODER)              += rangecoder.o
 OBJS-$(CONFIG_RV34DSP)                 += rv34dsp.o
+OBJS-$(CONFIG_SCTE35PTSADJUST_BSF)     += scte35ptsadjust_bsf.o
 OBJS-$(CONFIG_SINEWIN)                 += sinewin.o
 OBJS-$(CONFIG_SNAPPY)                  += snappy.o
 OBJS-$(CONFIG_STARTCODE)               += startcode.o
