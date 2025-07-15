@@ -1,33 +1,12 @@
-/*
- * Copyright (c) 2007 Bobby Bingham
- *
- * This file is part of FFmpeg.
- *
- * FFmpeg is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation; either
- * version 2.1 of the License, or (at your option) any later version.
- *
- * FFmpeg is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with FFmpeg; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
- */
-
 /**
  * @file
- * audio and video lumter
+ * audio and video luminance encoder
  */
 
 #include <stdio.h>
 
 #include "libavutil/attributes.h"
 #include "libavutil/imgutils.h"
-#include "libavutil/internal.h"
 #include "libavutil/opt.h"
 
 #include "avfilter.h"
@@ -77,21 +56,22 @@ static double _rgb_to_lab_f (double t) {
         ((7.787f * t) + (16.0f / 116.0f));
 };
 static void rgb_to_lab(const uint8_t rgb[3], double lab[3]) {
-    double R = ((double)rgb[0]) / 255.0;
-    double G = ((double)rgb[1]) / 255.0;
-    double B = ((double)rgb[2]) / 255.0;
+    double R,G,B, X,Y_,Z, fX,fY,fZ;
+    R = ((double)rgb[0]) / 255.0;
+    G = ((double)rgb[1]) / 255.0;
+    B = ((double)rgb[2]) / 255.0;
 
-    double X  = RGBToXYZMatrix[0] * R + RGBToXYZMatrix[1] * G + RGBToXYZMatrix[2] * B; // [0,1]
-    double Y_ = RGBToXYZMatrix[3] * R + RGBToXYZMatrix[4] * G + RGBToXYZMatrix[5] * B; // [0,1]
-    double Z  = RGBToXYZMatrix[6] * R + RGBToXYZMatrix[7] * G + RGBToXYZMatrix[8] * B; // [0,1]
+    X  = RGBToXYZMatrix[0] * R + RGBToXYZMatrix[1] * G + RGBToXYZMatrix[2] * B; // [0,1]
+    Y_ = RGBToXYZMatrix[3] * R + RGBToXYZMatrix[4] * G + RGBToXYZMatrix[5] * B; // [0,1]
+    Z  = RGBToXYZMatrix[6] * R + RGBToXYZMatrix[7] * G + RGBToXYZMatrix[8] * B; // [0,1]
 
     X  /= 0.950455f;
     Y_ /= 1.0f;
     Z  /= 1.088753f;
 
-    double fX = _rgb_to_lab_f(X);
-    double fY = _rgb_to_lab_f(Y_);
-    double fZ = _rgb_to_lab_f(Z);
+    fX = _rgb_to_lab_f(X);
+    fY = _rgb_to_lab_f(Y_);
+    fZ = _rgb_to_lab_f(Z);
 
     lab[0] = (Y_ > 0.008856) ?
         (116.0 * cbrt(Y_)) - 16.0 :
@@ -101,25 +81,25 @@ static void rgb_to_lab(const uint8_t rgb[3], double lab[3]) {
 }
 
 static void lab_to_rgb(const double lab[3], uint8_t rgb[3]) {
+    double R,G,B, X,Y_,Z, fX,fY,fZ, fX3,fZ3;
+    fY = (lab[0] + 16.0) / 116.0;
+    fX = lab[1] / 500.0 + fY;
+    fZ = fY - lab[2] / 200.0;
 
-    double fY = (lab[0] + 16.0) / 116.0;
-    double fX = lab[1] / 500.0 + fY;
-    double fZ = fY - lab[2] / 200.0;
+    fX3 = pow(fX, 3.0);
+    fZ3 = pow(fZ, 3.0);
 
-    double fX3 = pow(fX, 3.0);
-    double fZ3 = pow(fZ, 3.0);
-
-    double X  = (fX3 > 0.008856) ? fX3 : ((116 * fX) - 16) / 903.3;
-    double Y_ = (lab[0] > 903.3*0.008856) ? pow((lab[0] + 16)/116.0, 3.0) : lab[0] / 903.3;
-    double Z  = (fZ3 > 0.008856) ? fZ3 : ((116 * fZ) - 16) / 903.3;
+    X  = (fX3 > 0.008856) ? fX3 : ((116 * fX) - 16) / 903.3;
+    Y_ = (lab[0] > 903.3*0.008856) ? pow((lab[0] + 16)/116.0, 3.0) : lab[0] / 903.3;
+    Z  = (fZ3 > 0.008856) ? fZ3 : ((116 * fZ) - 16) / 903.3;
 
     X  *= 0.950455;            // [0,1]
     Y_ *= 1.0;                 // [0,1]
     Z  *= 1.088753;            // [0,1]
 
-    double R = XYZToRGBMatrix[0] * X + XYZToRGBMatrix[1] * Y_ + XYZToRGBMatrix[2] * Z; // [0,1]
-    double G = XYZToRGBMatrix[3] * X + XYZToRGBMatrix[4] * Y_ + XYZToRGBMatrix[5] * Z; // [0,1]
-    double B = XYZToRGBMatrix[6] * X + XYZToRGBMatrix[7] * Y_ + XYZToRGBMatrix[8] * Z; // [0,1]
+    R = XYZToRGBMatrix[0] * X + XYZToRGBMatrix[1] * Y_ + XYZToRGBMatrix[2] * Z; // [0,1]
+    G = XYZToRGBMatrix[3] * X + XYZToRGBMatrix[4] * Y_ + XYZToRGBMatrix[5] * Z; // [0,1]
+    B = XYZToRGBMatrix[6] * X + XYZToRGBMatrix[7] * Y_ + XYZToRGBMatrix[8] * Z; // [0,1]
 
     rgb[0] = R * 255.0;
     rgb[1] = G * 255.0;
@@ -153,7 +133,7 @@ static av_cold void lum_uninit(AVFilterContext *ctx) {
 
 static int filter_slice(AVFilterContext *ctx, void *arg, int jobnr,
                         int nb_jobs) {
-    LumContext *s = ctx->priv;
+    int x, y;
     AVFilterLink *inlink = ctx->inputs[0];
     const ThreadData *td = arg;
     const AVFrame *in = td->in;
@@ -164,14 +144,14 @@ static int filter_slice(AVFilterContext *ctx, void *arg, int jobnr,
         td->out_pos->data[0] + slice_start * td->out_pos->linesize[0];
     uint8_t *dst_neg =
         td->out_neg->data[0] + slice_start * td->out_neg->linesize[0];
-    int x, y;
 
     for (y = slice_start; y < slice_end; y++) {
         for (x = 0; x < inlink->w; x++) {
+            double hold;
             int r = 3*x;
             double lab[3];
             rgb_to_lab(&src[r], lab);
-            double hold = lab[0];
+            hold = lab[0];
 
             lab[0] = hold + td->modulation;
             lab[0] = (lab[0] > 100.0) ? 100.0 : (lab[0] < 0.0) ? 0.0 : lab[0];
@@ -193,14 +173,14 @@ static int filter_slice(AVFilterContext *ctx, void *arg, int jobnr,
 
 
 static int activate(AVFilterContext *ctx) {
-    LumContext *s = ctx->priv;
-    AVFilterLink *inlink = ctx->inputs[0];
     AVFrame *in;
-    int status, ret, nb_eofs = 0;
     int64_t pts;
     ThreadData td;
     unsigned sin_idx;
-
+    LumContext *s = ctx->priv;
+    AVFilterLink *inlink = ctx->inputs[0];
+    int  n_slices, status, ret, nb_eofs = 0;
+    int *return_vals;
     for (int i = 0; i < 2; i++)
         nb_eofs += ff_outlink_get_status(ctx->outputs[i]) == AVERROR_EOF;
 
@@ -214,6 +194,7 @@ static int activate(AVFilterContext *ctx) {
     if (ret < 0)
         return ret;
     if (ret > 0) {
+        double idx_d;
         for (int i = 0; i < 2; i++) {
             if (ff_outlink_get_status(ctx->outputs[i])) {
                 av_log(NULL, AV_LOG_DEBUG, "output %i status was non zero\n", i);
@@ -239,7 +220,7 @@ static int activate(AVFilterContext *ctx) {
             s->offset_ts = llrint(s->offset * seconds_to_ts);
         }
 
-        double idx_d = s->offset_ts / (double)s->period_ts;
+        idx_d = s->offset_ts / (double)s->period_ts;
         sin_idx = (unsigned) (idx_d * s->sin_table_size);
 
         td.in = in;
@@ -260,13 +241,8 @@ static int activate(AVFilterContext *ctx) {
         if (ret < 0)
             return ret;
 
-        /*
-         * for (int i = 0; i < ff_filter_get_nb_threads(ctx); i++) {
-         *     filter_slice(ctx, &td, i, ff_filter_get_nb_threads(ctx));
-         * }
-         */
-        const int n_slices = FFMIN(in->height, ff_filter_get_nb_threads(ctx));
-        int *return_vals = malloc(n_slices * sizeof(int));
+        n_slices = FFMIN(in->height, ff_filter_get_nb_threads(ctx));
+        return_vals = malloc(n_slices * sizeof(int));
         if (!return_vals) {
             ret = AVERROR(ENOMEM);
             av_frame_free(&in);
@@ -321,7 +297,6 @@ static int query_formats(AVFilterContext *ctx) {
 
 static int config_output(AVFilterLink *outlink) {
   AVFilterContext *ctx = outlink->src;
-  LumContext *s = ctx->priv;
 
   ctx->outputs[0]->w = ctx->inputs[0]->w;
   ctx->outputs[0]->h = ctx->inputs[0]->h;
